@@ -1,0 +1,7 @@
+FROM node:22-bullseye
+
+# Install the global CLI tool
+RUN npm install -g @provos/ironcurtain
+
+# Default to the listener mode
+ENTRYPOINT ["ironcurtain", "escalation-listener"]

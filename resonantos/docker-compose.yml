@@ -1,0 +1,49 @@
+name: "local_agent"
+
+services:
+  ironcurtain:
+    build:
+      context: .
+      dockerfile: Dockerfile.ironcurtain
+    container_name: ironcurtain_daemon
+    tty: true
+    stdin_open: true
+    # Ironcurtain requires host networking to communicate with Signal securely
+    network_mode: "host" 
+    volumes:
+      - socket_volume:/ironcurtain-sockets
+      # Map native ironcurtain preferences and signal keys
+      - $HOME/.ironcurtain:/root/.ironcurtain 
+    command: >
+       ironcurtain escalation-listener
+
+  resonantos:
+    build: .
+    container_name: resonantos_isolated
+    networks:
+      - resonantos_net
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - socket_volume:/ironcurtain_sockets
+    ports:
+      - "127.0.0.1:19100:19100"
+      - "127.0.0.1:18789:18789"
+
+
+
+volumes:
+  socket_volume:
+
+networks:
+  resonantos_net:
+    internal: true
+  default:
+    driver: bridge

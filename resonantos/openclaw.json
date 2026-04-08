@@ -1,0 +1,53 @@
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "token": "resonantos-local-gateway-token"
+    },
+    "controlUi": {
+      "enabled": true,
+      "dangerouslyDisableDeviceAuth": true,
+      "allowedOrigins": [
+        "http://localhost",
+        "http://localhost:19100",
+        "http://127.0.0.1",
+        "http://127.0.0.1:19100"
+      ]
+    }
+  },
+  "models": {
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://127.0.0.1:11434",
+        "apiKey": "ollama-local",
+        "api": "ollama",
+        "models": [
+          { "id": "llama3.1", "name": "Llama 3.1 8B", "contextWindow": 32768 },
+          { "id": "nomic-embed-text", "name": "Nomic Embed Text" }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/root/.openclaw/workspace-dev",
+      "skipBootstrap": true,
+      "model": {
+        "primary": "ollama/llama3.1"
+      }
+    },
+    "list": [
+      {
+        "id": "dev",
+        "default": true,
+        "workspace": "/root/.openclaw/workspace-dev"
+      },
+      {
+        "id": "setup",
+        "workspace": "/root/resonantos-alpha/agents/setup"
+      }
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+[submodule "resonantos/resonantos-alpha"]
+	path = resonantos/resonantos-alpha
+	url = https://github.com/danielkay/resonantos-alpha.git
