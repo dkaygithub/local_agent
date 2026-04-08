@@ -1,0 +1,29 @@
+# KEY QUESTIONS FOR REVIEW:
+# - Are we baking the Guardrails AI schema validators into the image layer, or mounting them dynamically as volumes?
+
+# Standardize on a relatively complete Python debian release required for complex pip graph resolution
+FROM python:3.11-slim-bookworm AS base
+
+# Prevent python from writing pyc files and enforce unbuffered stdout
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN groupadd -r languser && useradd -m -r -g languser languser
+
+WORKDIR /app
+
+COPY --chown=languser:languser requirements.txt .
+
+# Install heavy data science/ML dependencies. 
+# Explicitly ensuring Pydantic and LangGraph core engines are installed natively without caching
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy all node processing graphs and state machine logic
+COPY --chown=languser:languser ./graph /app/graph
+COPY --chown=languser:languser ./guardrails /app/guardrails
+
+# Execute as restricted user
+USER languser
+
+CMD ["python", "-m", "graph.execution_layer"]

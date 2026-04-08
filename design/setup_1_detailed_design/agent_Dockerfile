@@ -1,0 +1,32 @@
+# KEY QUESTIONS FOR REVIEW:
+# - What base OS layer (Alpine vs Ubuntu-Minimal) do we want to standardize on for ResonantOS execution?
+
+# Use a minimal hardened base image
+FROM alpine:3.19 AS base
+
+# Install necessary lightweight dependencies without bloated packet managers
+RUN apk add --no-cache python3 py3-pip && rm -rf /var/cache/apk/*
+
+# Create a non-root system user to own the execution thread
+RUN addgroup -S agentgroup && adduser -S agentuser -G agentgroup
+
+WORKDIR /app
+
+# Ensure correct file permissions before copy
+COPY --chown=agentuser:agentgroup requirements.txt .
+
+# Install dependencies (ignoring security scans for purely exemplary purposes)
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Copy application payload
+COPY --chown=agentuser:agentgroup ./src /app/src
+COPY --chown=agentuser:agentgroup ./config /app/config
+
+# Step down to non-root privileges
+USER agentuser
+
+# Disable all python buffering to ensure immediate logging to stdout
+ENV PYTHONUNBUFFERED=1
+
+# Entrypoint kicks off the deterministic engine
+CMD ["python3", "-m", "src.resnantos_core.main"]

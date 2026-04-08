@@ -1,0 +1,47 @@
+# Docker Compose: Setup 3
+
+# KEY QUESTIONS FOR REVIEW:
+# - Is the Langfuse environment variable injection sufficient for OpenClaw instrumentation natively, or does OpenClaw require heavy custom callback functions deployed alongside?
+
+version: "3.8"
+
+services:
+  # The Secure Runtime Wrap
+  nemoclaw-runtime:
+    build: 
+      context: .
+      dockerfile: agent_Dockerfile
+    # Defense-in-Depth: Kata hardware isolation beneath OpenShell's Sandboxing
+    runtime: kata-runtime
+    ports:
+      - "8085:8085" # The local Human-In-The-Loop Graphical UI exposed by NemoClaw
+    volumes:
+      # Mount the configuration Blueprint for authorization contexts
+      - ./nemoclaw_rbac.yaml:/etc/nemoclaw/policy.yaml:ro
+      - ./colang_rules:/app/colang_rules:ro
+      # Output pure unalterable Audit Logs out of the sandbox
+      - ./audit_logs:/var/log/nemoclaw
+    environment:
+      # Instrumenting LLM traces to Langfuse natively
+      - LANGFUSE_PUBLIC_KEY=pk-lf-uuid
+      - LANGFUSE_SECRET_KEY=sk-lf-uuid
+      - LANGFUSE_HOST=http://langfuse-server:3000
+    depends_on:
+      - langfuse-server
+      - llm-guard-scanner
+
+  # Observability Context for Agents (Split from Audit logs)
+  langfuse-server:
+    image: langfuse/langfuse:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./langfuse_data:/database
+
+  # Scanner Middleware
+  llm-guard-scanner:
+    image: dstack/llm-guard:latest
+
+networks:
+  default:
+    driver: bridge

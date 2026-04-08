@@ -1,0 +1,27 @@
+# KEY QUESTIONS FOR REVIEW:
+# - Which specific version of the NVIDIA Nemo base image ensures the most lightweight OpenShell execution without CUDA overhead, assuming we run OpenClaw logic vs local inference on the exact same container?
+
+# Utilize base optimized for Nemo ecosystems
+FROM nvcr.io/nvidia/nemo:latest AS base
+
+# Switch to root explicitly to provision the OpenShell sandbox wrappers
+USER root
+RUN apt-get update && apt-get install -y libseccomp-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Establish the unprivileged agent user for OpenClaw
+RUN groupadd -r clawgroup && useradd -m -r -g clawgroup clawuser
+
+WORKDIR /openclaw
+
+# Provision requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Integrate the actual logical workflows
+COPY ./agent_src /openclaw/src
+
+RUN chown -R clawuser:clawgroup /openclaw
+
+# The default runtime command explicitly invokes the NemoClaw hypervisor rather than pure Python
+CMD ["nemoclaw", "execute", "--enforce-sandbox", "--blueprint=/etc/nemoclaw/policy.yaml", "--module=src.agent"]

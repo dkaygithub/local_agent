@@ -1,0 +1,55 @@
+# Docker Compose: Setup 1
+
+# KEY QUESTIONS FOR REVIEW:
+# - Will IronCurtain need access to additional internal databases to verify the specific payload being forwarded, or is endpoint allow-listing sufficient?
+
+version: "3.8"
+
+services:
+  # The Core Agent Instance
+  resnantos-agent:
+    build: 
+      context: .
+      dockerfile: agent_Dockerfile
+    # Enforce Kata Containers runtime to maintain VM hardware-isolation guarantees
+    runtime: kata-runtime
+    # Absolutely no networking inside the container except internal local loopback
+    network_mode: none
+    volumes:
+      # Mount the Unix Socket used by IronCurtain to permit controlled proxy egress
+      - ./sockets/ironcurtain.sock:/var/run/ironcurtain/proxy.sock
+      # Mount the static internal datasets, explicitly read-only
+      - ./models:/app/models:ro
+    environment:
+      - IRON_CURTAIN_SOCKET=/var/run/ironcurtain/proxy.sock
+      # The agent is only provided a fake API key
+      - OPENAI_API_KEY=sk-fake-local-agent-key-1234
+    depends_on:
+      - ironcurtain-proxy
+      - llm-guard-scanner
+
+  # The Local Tool Execution / Proxy Boundary
+  ironcurtain-proxy:
+    image: ironcurtain/proxy:latest
+    ports:
+      - "8081:8081" # HITL Dashboard Port
+    volumes:
+      - ./ironcurtain_config.yml:/etc/ironcurtain/config.yml:ro
+      - ./sockets:/var/run/ironcurtain
+    environment:
+      # Actual secrets are provided securely to the proxy only
+      - REAL_OPENAI_API_KEY=${SECRET_OPENAI_API_KEY}
+    networks:
+      - agent_bridge
+
+  # Local Artifact Scanner
+  llm-guard-scanner:
+    image: dstack/llm-guard:latest
+    volumes:
+      - ./models:/app/models:ro
+    networks:
+      - agent_bridge
+
+networks:
+  agent_bridge:
+    driver: bridge

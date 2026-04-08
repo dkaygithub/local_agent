@@ -1,0 +1,65 @@
+# Docker Compose: Setup 2
+
+# KEY QUESTIONS FOR REVIEW:
+# - Will we run Postgres centrally for Langfuse, or simply rely on ephemeral SQLite given everything is localized?
+
+version: "3.8"
+
+services:
+  # LangGraph Stateful Agent Execution
+  langgraph-agent:
+    build: 
+      context: .
+      dockerfile: agent_Dockerfile
+    # Enforcing VM sandbox natively
+    runtime: kata-runtime
+    networks:
+      - secure_internal
+    environment:
+      # Direct agent traffic strictly to Bifrost HTTP context
+      - BIFROST_MCP_URL=http://bifrost-gateway:8000/mcp
+      - LANGFUSE_PUBLIC_KEY=pk-lf-1234
+      - LANGFUSE_SECRET_KEY=sk-lf-5678
+      - LANGFUSE_HOST=http://langfuse-server:3000
+    depends_on:
+      - bifrost-gateway
+      - langfuse-server
+
+  # Local AI Gateway for Tool Invocation
+  bifrost-gateway:
+    image: bifrost-gateway:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./auth_keys.json:/app/config/auth_keys.json:ro
+    environment:
+      # The real API routes provided entirely to the gateway proxy
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-server:3000/api/public/otel
+      - OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer pk-lf-1234"
+    networks:
+      - secure_internal
+      - public_egress
+
+  # Centralized Observable Traces
+  langfuse-server:
+    image: langfuse/langfuse:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./langfuse_data:/database
+    networks:
+      - secure_internal
+
+  # Scanner Middleware
+  llm-guard-scanner:
+    image: dstack/llm-guard:latest
+    networks:
+      - secure_internal
+
+networks:
+  secure_internal:
+    driver: bridge
+    # The agent and gateway chat privately
+  public_egress:
+    driver: bridge
+    # Bifrost alone dials out into the broader network
