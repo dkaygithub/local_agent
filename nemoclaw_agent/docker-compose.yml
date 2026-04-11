@@ -1,0 +1,28 @@
+services:
+  nemoclaw:
+    build: .
+    container_name: nemoclaw_agent
+    stdin_open: true   # docker run -i
+    tty: true          # docker run -t
+    environment:
+      # Name of the sandbox created during onboarding — used to auto-connect
+      # the port 18789 forward on startup. Change if you named yours differently.
+      - NEMOCLAW_SANDBOX=bruiser
+    volumes:
+      # Persist NemoClaw sandbox config/state between container runs
+      - ./nemoclaw-data:/root/.nemoclaw
+      # Persist OpenShell gateway metadata between container runs
+      - ./openshell-data:/root/.config/openshell
+      # Docker socket so nemoclaw can reach the host daemon
+      - /var/run/docker.sock:/var/run/docker.sock
+    # === WSL2 / Docker Desktop Workaround ===
+    # We cannot use `network_mode: "host"` because Docker Desktop runs the engine inside an
+    # isolated hidden VM (`docker-desktop`), meaning host ports get bound to the VM, not Windows/WSL.
+    # Instead, we abandon host networking and map the UI port directly.
+    ports:
+      - "18789:18790"
+    
+    # We need to bridge internal traffic back to the host machine.
+    # This allows `host.docker.internal` to resolve to the parent WSL/Docker VM host environment.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
