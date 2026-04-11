@@ -1,3 +1,6 @@
 [submodule "resonantos/resonantos-alpha"]
 	path = resonantos/resonantos-alpha
 	url = https://github.com/dkaygithub/resonantos-alpha.git
+[submodule "ironcurtain_agent/ironcurtain"]
+	path = ironcurtain_agent/ironcurtain
+	url = https://github.com/provos/ironcurtain

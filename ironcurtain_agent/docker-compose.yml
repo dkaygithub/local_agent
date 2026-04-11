@@ -1,0 +1,20 @@
+services:
+  agent:
+    build: .
+    container_name: ironcurtain_agent
+    network_mode: "host"
+    volumes:
+      # Map Docker socket so IronCurtain daemon can natively spin up Signal
+      - /var/run/docker.sock:/var/run/docker.sock
+      # General configuration and sessions
+      - ~/.ironcurtain:/root/.ironcurtain
+      # Map Ollama models to persistent host volume
+      - ~/.ollama:/root/.ollama
+    # GPU support for fast local inference (Llama 3.1)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
