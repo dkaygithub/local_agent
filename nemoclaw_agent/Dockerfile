@@ -12,7 +12,8 @@ RUN curl -fsSL https://nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-
     && nemoclaw --version
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY fix-policies.sh /fix-policies.sh
+RUN chmod +x /entrypoint.sh /fix-policies.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["bash"]
+CMD ["sleep", "infinity"]

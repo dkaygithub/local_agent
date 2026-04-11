@@ -2,3 +2,4 @@ nemoclaw-data/
 openshell-data/
 nemoclaw-local/
 .nemoclaw
+*.tmp.json
