@@ -91,6 +91,8 @@ openshell sandbox exec -n bruiser -- \
 
 **Verification:** Check for `[proxy-fix] CONNECT tunnel for gateway.discord.gg` and `[proxy-fix] Token replaced in WebSocket send` in stdout. OCSF logs should show `NET:UPGRADE [INFO] gateway.discord.gg:443`.
 
+**`requireMention` behavior:** The default config sets `requireMention: true` for the guild. The bot will silently skip messages (log: `discord: skipping guild message`) unless you @mention it. To change this, set `DISCORD_REQUIRE_MENTION=false` in `onboard.sh` before onboarding.
+
 ## 6. openclaw.json Is Read-Only (Landlock)
 The sandbox filesystem uses Landlock to enforce:
 - **Read-only:** `/sandbox/.openclaw/` (includes `openclaw.json`, the main config file)
@@ -164,3 +166,21 @@ The openclaw `inference` provider uses `baseUrl: "https://inference.local/v1"` w
 - `inference.local` only resolves through the proxy (`HTTPS_PROXY=http://10.200.0.1:3128`)
 - To test the inference endpoint directly: `HTTPS_PROXY=http://10.200.0.1:3128 curl -sk https://inference.local/v1/models`
 - A `400 status code (no body)` from an agent run usually means the inference proxy is misconfigured or the API key is invalid — test with the curl above before debugging openclaw further.
+- **Gemini free tier quota:** The free tier allows only **20 requests per day** per model. A single conversation with context compaction can burn through this in minutes. If you see `⚠️ API rate limit reached` in Discord or `RESOURCE_EXHAUSTED` / `429` in logs, check your Gemini API key is from a paid project at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+- **Updating the API key:** Edit `~/.nemoclaw/credentials.json`, then re-run `onboard.sh --recreate` to propagate the new key to the OpenShell provider's rewrite table.
+
+## 11. Credential Sync & Provider Rewrite Table
+The `openshell:resolve:env:` placeholder system requires the OpenShell gateway to inject provider credentials into the L7 proxy's rewrite table. A bare `nemoclaw onboard` creates the provider but **doesn't always trigger the sync**. Running `nemoclaw <name> connect` triggers a full sandbox session recovery which syncs credentials.
+
+If inference or Discord auth fails after onboard with placeholder-related errors, run:
+```bash
+nemoclaw bruiser connect --command "echo credentials-synced && exit"
+```
+
+## 12. Sandbox Shell Limitations
+The sandbox container is minimal — many standard tools are missing:
+- **No `kill`, `pkill`, `ps`, `fuser`, `lsof`** — Use python3 `/proc` scanning to find/kill processes (see Section 8).
+- **No `pgrep`** — Same workaround.
+- **`openshell sandbox exec` rejects newlines in arguments** — All python/shell one-liners must be on a single line.
+- **`openshell sandbox upload` treats the dest as a directory if it looks like a filename** — Upload to a directory path (e.g., `/tmp/`) and let it infer the basename, not to a full file path.
+- **`npm install` may OOM (exit 137)** — The sandbox has limited memory. Avoid large npm installs inside the sandbox.
