@@ -2,6 +2,16 @@
 
 This document contains critical architectural insights and troubleshooting lessons learned while setting up and debugging the NemoClaw sandbox environment. Future developers and AI agents should consult this document before modifying network configurations, proxy policies, or the deployment stack.
 
+## 0. Do NOT Use Raw kubectl Commands
+**Never run `kubectl delete pod`, `kubectl exec`, or any direct kubectl manipulation** against the NemoClaw/OpenShell cluster. The sandbox pod has init processes (DNS proxy, policy sync agents, Landlock setup) that are provisioned during `nemoclaw onboard` and will not be recreated if the pod is deleted and rescheduled by K3s. Deleting the pod via kubectl leaves the sandbox in a broken state (no DNS, no transparent proxy interception) that cannot be fixed without a full destroy + re-onboard.
+
+**Instead, always use:**
+- `nemoclaw <name> destroy` to tear down a sandbox
+- `nemoclaw onboard` to recreate it
+- `nemoclaw <name> policy-add` / `openshell policy set` to manage policies
+- `openshell forward` to manage port forwarding
+- `docker restart openshell-cluster-nemoclaw` only for the gRPC watch stream fix (this restarts the K3s cluster, not individual pods)
+
 ## 1. Network Policies & The "Deny-by-Default" Proxy
 NemoClaw sandboxes use a strict **"deny-by-default"** egress proxy (`10.200.0.1:3128`). If an outbound request receives a `403 Forbidden` or `000` (connection reset) from `curl` tests, it is almost certainly a policy enforcement block.
 
@@ -26,19 +36,60 @@ NemoClaw and OpenShell strictly separate their ephemeral container state from co
 
 Once a policy (like `discord`, `npm`, `pypi`, `brave`, `github`) is applied once, it is permanently stored in these directories. Restarting the `openshell-cluster-nemoclaw` container automatically boots the agent with the exact identical configurations.
 
+### Non-Interactive Onboarding
+NemoClaw supports fully non-interactive onboarding via environment variables. This is the preferred way to recreate a sandbox after a destroy, avoiding the multi-step interactive wizard. The script `onboard.sh` in this repo automates this.
+
+**Usage:**
+```bash
+./onboard.sh              # standard onboard
+./onboard.sh --recreate   # destroy + recreate existing sandbox
+```
+
+**How it works:** The script reads API keys from `~/.nemoclaw/credentials.json` (populated by the first interactive onboard) and exports them alongside the sandbox configuration as env vars. Key variables:
+
+| Env Var | Purpose |
+|---|---|
+| `NEMOCLAW_NON_INTERACTIVE=1` | Skip all interactive prompts |
+| `NEMOCLAW_SANDBOX_NAME` | Sandbox name (e.g. `bruiser`) |
+| `NEMOCLAW_PROVIDER` | Inference provider (`gemini`, `openai`, `anthropic`, etc.) |
+| `NEMOCLAW_MODEL` | Model ID (e.g. `gemini-3-flash-preview`) |
+| `GEMINI_API_KEY` | API key for the provider (env var name matches `credentialEnv` from onboard session) |
+| `DISCORD_BOT_TOKEN` | Discord bot token |
+| `DISCORD_SERVER_ID` | Discord guild ID for workspace access |
+| `DISCORD_REQUIRE_MENTION` | Whether bot requires @mention (`true`/`false`) |
+| `BRAVE_API_KEY` | Brave Search API key |
+| `NEMOCLAW_POLICY_MODE` | `custom` (explicit list) or `suggested` (defaults) |
+| `NEMOCLAW_POLICY_PRESETS` | Comma-separated preset names (e.g. `pypi,npm,discord,brave`) |
+| `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` | Skip the third-party software acceptance prompt |
+
+**To update the config:** Edit `onboard.sh` directly — it is the source of truth for the sandbox's non-interactive configuration. Secrets are never stored in the script; they are read from `~/.nemoclaw/credentials.json` at runtime.
+
 ## 4. Debugging Scripts
 Any Python or shell scripts written for diagnostics or one-off fixes must be saved to `/dbg/` in the project root (i.e. `local_agent/dbg/`) before executing them. This preserves a record of what was run and why. Do not run inline scripts via `--command` without first writing the file to `/dbg/`.
 
 ## 5. Discord Bot & WebSocket Connectivity
-Node.js (and by extension `discord.js`) does **not** natively obey external `HTTP_PROXY` or `HTTPS_PROXY` environmental variables for its WebSocket (`wss://`) traffic without specific dependency patching (like `global-agent`).
+The Discord gateway WebSocket (`wss://gateway.discord.gg`) fails with `AggregateError` / WebSocket 1006 when launched normally inside the sandbox. This is a known issue: [NVIDIA/NemoClaw#1738](https://github.com/NVIDIA/NemoClaw/issues/1738).
 
-However, NemoClaw handles this gracefully via transparent interception.
-- **Requirement:** For this interception to catch the traffic, the DNS lookup for the target (`gateway.discord.gg`) **must succeed** inside the pod.
-- **IPv4 Priority (CRITICAL):** Docker/K3s networking causes IPv6 DNS lookups to fail or time out in Node, producing an `AggregateError` and preventing the Discord WebSocket from ever connecting. The gateway process **must** be started with `NODE_OPTIONS=--dns-result-order=ipv4first` in its environment to force reliable IPv4 resolution.
-- **How to apply:** When restarting the openclaw gateway manually, always prefix the command:
-  ```bash
-  NODE_OPTIONS=--dns-result-order=ipv4first openclaw gateway run --force --port 18789 > /tmp/gateway.log 2>&1 &
-  ```
+**Root cause:** The sandbox sets `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` + `NODE_USE_ENV_PROXY=1` on the gateway worker process (UID 998). Node.js's `EnvHttpProxyAgent` sends forward-proxy requests to `10.200.0.1:3128` for WebSocket connections, but the L7 proxy expects CONNECT tunnels. The `ws` module itself doesn't read proxy env vars — but undici's `EnvHttpProxyAgent` interferes at the HTTP level. REST API calls (`discord.com/api/...`) work fine; only the WebSocket upgrade to `gateway.discord.gg` fails.
+
+**Fix:** A Node.js preload script (`discord-proxy-fix.cjs`) that:
+1. Patches `https.request` to establish proper CONNECT tunnels for `*.discord.gg`
+2. Patches `WebSocket.send` to replace the `openshell:resolve:env:DISCORD_BOT_TOKEN` placeholder with the real token (since L7 proxy token rewriting can't operate inside an encrypted CONNECT tunnel)
+
+**How to apply:** The `onboard.sh` script handles this automatically. For manual restart:
+```bash
+# Upload the fix + real token into sandbox /tmp/
+openshell sandbox upload bruiser discord-proxy-fix.cjs /tmp/
+echo "$REAL_TOKEN" | openshell sandbox exec -n bruiser -- sh -c 'cat > /tmp/.discord-token'
+
+# Start gateway with the preload (must run as root to bypass NODE_OPTIONS block)
+openshell sandbox exec -n bruiser -- \
+  env HOME=/sandbox \
+      NODE_OPTIONS='--require /tmp/discord-proxy-fix.cjs --dns-result-order=ipv4first' \
+  openclaw gateway run --port 18789
+```
+
+**Verification:** Check for `[proxy-fix] CONNECT tunnel for gateway.discord.gg` and `[proxy-fix] Token replaced in WebSocket send` in stdout. OCSF logs should show `NET:UPGRADE [INFO] gateway.discord.gg:443`.
 
 ## 6. openclaw.json Is Read-Only (Landlock)
 The sandbox filesystem uses Landlock to enforce:
@@ -66,32 +117,32 @@ openshell doctor exec -- kubectl exec -n openshell bruiser -- npm i -g openclaw@
 ```
 
 ## 8. Gateway Restart Procedure
-Systemd is not available inside the bruiser pod. `openclaw gateway restart` and `openclaw gateway install` will fail. To restart:
+Systemd is not available inside the bruiser pod. `openclaw gateway restart` and `openclaw gateway install` will fail. Use `openshell sandbox exec` to manage the gateway:
 
-### Step 1: Start the gateway
+### Step 1: Stop existing gateway
 ```bash
-openclaw gateway run
-```
-Always include `NODE_OPTIONS=--dns-result-order=ipv4first` in the environment (see Section 5).
-
-**CRITICAL:** When starting the gateway via `kubectl exec` (which runs as root with `HOME=/root`), you **must** set `HOME=/sandbox` so openclaw can find its config at `/sandbox/.openclaw/openclaw.json`. Without this, the gateway fails with "Missing config":
-```bash
-HOME=/sandbox NODE_OPTIONS=--dns-result-order=ipv4first openclaw gateway run --port 18789
+openshell sandbox exec -n bruiser -- openclaw gateway stop
+# Force-kill if still running (no kill/pkill in sandbox):
+openshell sandbox exec -n bruiser -- python3 -c "import os; [os.kill(int(p), 9) for p in os.listdir('/proc') if p.isdigit() and b'openclaw-gateway' in open(f'/proc/{p}/cmdline','rb').read()]"
 ```
 
-### Step 2: Get the new token
-After restart, retrieve the new token to re-authenticate:
+### Step 2: Start the gateway with Discord fix
+The gateway must be started via `openshell sandbox exec` (runs as root) to bypass the `NODE_OPTIONS` block. `HOME=/sandbox` is required so openclaw finds its config:
 ```bash
-openclaw dashboard
+openshell sandbox exec -n bruiser -- \
+  env HOME=/sandbox \
+      NODE_OPTIONS='--require /tmp/discord-proxy-fix.cjs --dns-result-order=ipv4first' \
+  openclaw gateway run --port 18789
 ```
-This prints the dashboard URL and token. Use the token for the Control UI login and for the SSH tunnel's `--token` flag.
+See Section 5 for details on the Discord fix. If Discord is not needed, omit `--require /tmp/discord-proxy-fix.cjs`.
 
-### Step 3: Kill stale SSH tunnels and reconnect
-If the old SSH tunnel is still bound to the port:
+### Step 3: Restart port forward + get new token
 ```bash
-fuser -k 18789/tcp
+openshell forward stop 18789 bruiser
+openshell forward start --background "0.0.0.0:18789" bruiser
+openshell sandbox exec -n bruiser -- grep OPENCLAW_GATEWAY_TOKEN /sandbox/.bashrc
 ```
-Then re-establish the tunnel with the new token.
+Paste the token into the Control UI login page.
 
 ## 9. Control UI Authentication
 After a fresh install or gateway restart, the Control UI at `http://localhost:18789` uses **token auth**. Retrieve the token with:
