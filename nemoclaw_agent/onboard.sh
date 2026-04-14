@@ -61,66 +61,43 @@ echo "  Discord:  server $DISCORD_SERVER_ID"
 
 nemoclaw onboard --non-interactive "${EXTRA_FLAGS[@]}"
 
-# ── Post-onboard: apply Discord CONNECT tunnel fix ──
-#
-# The OpenShell L7 proxy (10.200.0.1:3128) intercepts all sandbox egress.
-# Node.js's EnvHttpProxyAgent sends forward-proxy requests for WebSocket
-# connections to gateway.discord.gg, but the proxy expects CONNECT tunnels.
-# This causes AggregateError / WebSocket 1006 failures.
-# See: https://github.com/NVIDIA/NemoClaw/issues/1738
-#
-# Fix: a Node.js preload script (discord-proxy-fix.cjs) that:
-#   1. Patches https.request to use CONNECT tunnels for *.discord.gg
-#   2. Patches WebSocket.send to inject the real bot token (since the
-#      openshell:resolve:env: placeholder can't be rewritten inside an
-#      encrypted CONNECT tunnel)
-#
-# The fix is loaded via NODE_OPTIONS='--require /tmp/discord-proxy-fix.cjs'.
-# OpenClaw blocks NODE_OPTIONS for the sandbox user, so we use
-# openshell sandbox exec (runs as root) to start the gateway.
-
+# ── Post-onboard: Discord CONNECT-tunnel fix + gateway start ──
+# Delegated to restart-gateway.sh so the logic lives in one place and can
+# be rerun standalone when the gateway dies (issue #1738 context lives in
+# that script's header).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DISCORD_TOKEN="$(read_cred DISCORD_BOT_TOKEN)"
+SANDBOX="$NEMOCLAW_SANDBOX_NAME" CREDS="$CREDS" \
+  "$SCRIPT_DIR/restart-gateway.sh"
+
+# ── Post-onboard: install mcporter + register HEB MCP bridge ──
+#
+# The HEB MCP server runs on the host at http://host.docker.internal:4321
+# (see ~/projects/local_agent/heb/). OAuth tokens stay on the host; the
+# sandbox only speaks MCP over the network. Egress is opened by the
+# `heb` policy block with allowed_ips for the host's private IP (SSRF
+# override). See AGENTS.md §13.
+#
+# `mcporter` itself lives under /usr/local/bin (image layer) and is wiped
+# on --recreate, so we reinstall it every run. The mcporter config under
+# /sandbox/.openclaw-data/ persists across recreates.
+
+MCPORTER_CFG=/sandbox/.openclaw-data/mcporter.json
+HEB_MCP_URL=http://host.docker.internal:4321/mcp
 
 echo ""
-echo "Syncing credentials via nemoclaw connect..."
-nemoclaw "$NEMOCLAW_SANDBOX_NAME" connect --command "echo credentials-synced && exit" || true
+echo "Installing mcporter + registering HEB MCP server..."
+openshell doctor exec -- kubectl exec -n openshell bruiser -- \
+  npm i -g mcporter >/dev/null 2>&1 || echo "  (mcporter install skipped or already present)"
 
-echo ""
-echo "Applying Discord CONNECT tunnel fix (issue #1738)..."
-
-# Upload fix script and real token to sandbox /tmp/
-# Note: openshell sandbox upload treats the dest as a directory if it ends with
-# a filename, so we upload to /tmp/ and let it infer the basename.
-echo "$DISCORD_TOKEN" > /tmp/.discord-token
-openshell sandbox upload "$NEMOCLAW_SANDBOX_NAME" "$SCRIPT_DIR/discord-proxy-fix.cjs" /tmp/
-openshell sandbox upload "$NEMOCLAW_SANDBOX_NAME" /tmp/.discord-token /tmp/
-rm -f /tmp/.discord-token
-
-# Stop existing gateway
-openshell sandbox exec -n "$NEMOCLAW_SANDBOX_NAME" -- openclaw gateway stop 2>/dev/null || true
-sleep 2
-# Force-kill if still running (no kill/pkill in sandbox, openshell sandbox exec
-# rejects newlines in args, so use a one-liner)
-openshell sandbox exec -n "$NEMOCLAW_SANDBOX_NAME" -- python3 -c "import os; [os.kill(int(p), 9) for p in os.listdir('/proc') if p.isdigit() and b'openclaw-gateway' in open(f'/proc/{p}/cmdline','rb').read()]" 2>/dev/null || true
-sleep 1
-
-# Start gateway with the fix preloaded (runs as root via sandbox exec)
+# Idempotent add — `mcporter config add` fails if the server already exists,
+# so we check first.
+if ! openshell sandbox exec -n "$NEMOCLAW_SANDBOX_NAME" -- \
+     mcporter --config "$MCPORTER_CFG" list 2>/dev/null | grep -q '^- heb '; then
+  openshell sandbox exec -n "$NEMOCLAW_SANDBOX_NAME" -- \
+    mcporter --config "$MCPORTER_CFG" config add heb --url "$HEB_MCP_URL" || true
+fi
 openshell sandbox exec -n "$NEMOCLAW_SANDBOX_NAME" -- \
-  env HOME=/sandbox \
-      NODE_OPTIONS='--require /tmp/discord-proxy-fix.cjs --dns-result-order=ipv4first' \
-  openclaw gateway run --port 18789 > /tmp/gateway-start.log 2>&1 &
-
-echo "  Waiting for gateway to start..."
-sleep 5
-
-# Restart port forward
-openshell forward stop 18789 "$NEMOCLAW_SANDBOX_NAME" 2>/dev/null || true
-openshell forward start --background "0.0.0.0:18789" "$NEMOCLAW_SANDBOX_NAME"
-
-# Show fix status from gateway log
-openshell sandbox exec -n "$NEMOCLAW_SANDBOX_NAME" -- sh -c "head -15 /tmp/gateway.log 2>/dev/null" || true
-echo ""
+  mcporter --config "$MCPORTER_CFG" list heb 2>&1 | tail -3 || true
 
 # Print dashboard token
 openshell sandbox exec -n "$NEMOCLAW_SANDBOX_NAME" -- \

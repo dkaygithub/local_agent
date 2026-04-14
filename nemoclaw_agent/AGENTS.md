@@ -184,3 +184,26 @@ The sandbox container is minimal — many standard tools are missing:
 - **`openshell sandbox exec` rejects newlines in arguments** — All python/shell one-liners must be on a single line.
 - **`openshell sandbox upload` treats the dest as a directory if it looks like a filename** — Upload to a directory path (e.g., `/tmp/`) and let it infer the basename, not to a full file path.
 - **`npm install` may OOM (exit 137)** — The sandbox has limited memory. Avoid large npm installs inside the sandbox.
+
+## 13. HEB MCP Bridge (host-side OAuth, sandbox-side MCP)
+
+Exposes H-E-B grocery tools to the sandbox via MCP without letting OAuth tokens enter it. Project at `~/projects/local_agent/heb/`.
+
+**Architecture.** An Express + `StreamableHTTPServerTransport` MCP server runs in Docker on the host at `0.0.0.0:4321`, serving vendored tool definitions from upstream `ihildy/heb-sdk-unofficial`. Tokens live at `~/projects/local_agent/heb/tokens.json` (mode 0600), bind-mounted into the container at `/secrets/tokens.json`. Token refresh happens inside the container on demand and atomic-writes back to the same file (with a fallback to in-place overwrite because Docker bind-mounted single files can't be replaced via `rename(2)`). The sandbox talks to the server via `mcporter` → `http://host.docker.internal:4321/mcp`.
+
+**Token isolation invariant.** Tokens never enter the sandbox filesystem or environment. Only MCP traffic crosses the boundary. Verify with:
+```bash
+openshell sandbox exec -n bruiser -- sh -c \
+  'grep -rl "access_token\|refresh_token" /sandbox /tmp 2>/dev/null || echo CLEAN'
+```
+
+**One-time bootstrap (host).** `npx tsx bootstrap.ts` runs PKCE login: it prints an H-E-B OAuth URL (mobile client `myheb-ios-prd`, redirect is `com.heb.myheb://oauth2redirect` — a mobile deep link, so the browser shows a protocol-handler error after login), then prompts for the full redirect URL pasted from the browser's address bar. It exchanges the code and writes `tokens.json`. Then `docker compose up -d --build`.
+
+**Egress policy — narrow SSRF override.** `host.docker.internal` resolves to a private IP, which the egress proxy's SSRF engine blocks by default. The `heb` block in the bruiser policy uses `access: full` (L4 passthrough — Streamable HTTP needs SSE so the L7 REST inspector would break streams) plus the `allowed_ips` per-endpoint override for the single private IP (`192.168.65.254` on Docker Desktop WSL2). Binaries whitelist: `node`, `mcporter`. This is one hostname, one port, one IP, three binaries — nothing more.
+
+**Persistence across `--recreate`.** `/usr/local/bin/mcporter` lives on the pod's read-only image layer and is wiped on sandbox recreate; `/sandbox/.openclaw-data/mcporter.json` is persistent. `onboard.sh` reinstalls mcporter (via `openshell doctor exec -- kubectl exec ... npm i -g mcporter`) and idempotently re-registers the `heb` server on every run.
+
+**Troubleshooting.**
+- `403` via `HTTP Tunneling` from sandbox → policy out of sync or `allowed_ips` missing. Re-apply via `openshell policy set bruiser --policy /home/dkay/projects/local_agent/dbg/bruiser-policy-heb.yaml`.
+- `Already connected to a transport` 500 from `/mcp` → `McpServer.connect()` can only be called once per McpServer; the server creates a fresh instance per mcp-session-id.
+- Refresh failures → `docker logs heb-mcp` on the host. Expired `refresh_token` means re-run bootstrap.
