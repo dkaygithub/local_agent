@@ -50,14 +50,13 @@ openshell forward stop 18789 bruiser
 
 ## Gateway Management
 
-The openclaw gateway runs inside the bruiser sandbox pod. Systemd is not available, so `openclaw gateway restart` does not work. To restart manually:
+The openclaw gateway runs inside the bruiser sandbox pod. Systemd is not available, so `openclaw gateway restart` does not work. Use the checked-in script, which handles the full stop/start/forward dance including the Discord CONNECT-tunnel preload:
 
 ```bash
-nemoclaw bruiser connect --command \
-  "NODE_OPTIONS=--dns-result-order=ipv4first openclaw gateway run --force --port 18789 > /tmp/gateway.log 2>&1 &"
+./restart-gateway.sh
 ```
 
-**Important:** Always include `NODE_OPTIONS=--dns-result-order=ipv4first`. Without it, Discord WebSocket connections will fail with `AggregateError` due to IPv6 DNS failures in the K3s network.
+See `AGENTS.md` Section 8 for the underlying procedure. Never shell into the sandbox with `nemoclaw ... connect --command "..."` — that flag is not supported and the command hangs.
 
 ## Updating OpenClaw
 

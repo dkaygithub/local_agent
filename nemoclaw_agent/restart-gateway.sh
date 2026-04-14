@@ -43,11 +43,11 @@ if [ -z "$DISCORD_TOKEN" ]; then
   exit 1
 fi
 
-echo "Syncing credentials via nemoclaw connect (20s timeout)..."
-# nemoclaw connect needs a TTY; when invoked non-interactively it can hang.
-# A failure here is not fatal — credentials sync is also done by onboard.
-timeout 20 nemoclaw "$SANDBOX" connect --command "echo credentials-synced && exit" || \
-  echo "  (connect timed out or failed — continuing; credentials likely already synced)"
+echo "Skipping nemoclaw connect credential-sync step."
+# `nemoclaw connect --command "..."` is not a supported invocation — the flag
+# appears accepted but the command hangs forever. Credentials are synced by
+# `onboard.sh`; if they're truly out of date, run an interactive
+# `nemoclaw "$SANDBOX" connect` session manually and exit.
 
 echo "Uploading Discord CONNECT-tunnel fix + token into sandbox /tmp/..."
 # openshell sandbox upload treats dest as a directory when it ends with /,

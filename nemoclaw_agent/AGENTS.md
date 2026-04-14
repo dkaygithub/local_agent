@@ -170,12 +170,11 @@ The openclaw `inference` provider uses `baseUrl: "https://inference.local/v1"` w
 - **Updating the API key:** Edit `~/.nemoclaw/credentials.json`, then re-run `onboard.sh --recreate` to propagate the new key to the OpenShell provider's rewrite table.
 
 ## 11. Credential Sync & Provider Rewrite Table
-The `openshell:resolve:env:` placeholder system requires the OpenShell gateway to inject provider credentials into the L7 proxy's rewrite table. A bare `nemoclaw onboard` creates the provider but **doesn't always trigger the sync**. Running `nemoclaw <name> connect` triggers a full sandbox session recovery which syncs credentials.
+The `openshell:resolve:env:` placeholder system requires the OpenShell gateway to inject provider credentials into the L7 proxy's rewrite table. A bare `nemoclaw onboard` creates the provider but **doesn't always trigger the sync**. Running `nemoclaw <name> connect` (interactive) triggers a full sandbox session recovery which syncs credentials.
 
-If inference or Discord auth fails after onboard with placeholder-related errors, run:
-```bash
-nemoclaw bruiser connect --command "echo credentials-synced && exit"
-```
+> **Warning:** `nemoclaw <name> connect` has no working `--command` flag. Passing `--command "..."` hangs indefinitely — the invocation never completes and nothing runs. For non-interactive commands in the sandbox, use `openshell sandbox exec -n <name> -- <cmd>` instead.
+
+If inference or Discord auth fails after onboard with placeholder-related errors, open an interactive `nemoclaw bruiser connect` session briefly and exit — that alone triggers the sync.
 
 ## 12. Sandbox Shell Limitations
 The sandbox container is minimal — many standard tools are missing:
