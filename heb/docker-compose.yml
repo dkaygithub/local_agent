@@ -1,0 +1,15 @@
+services:
+  heb-mcp:
+    build: .
+    container_name: heb-mcp
+    ports:
+      - "0.0.0.0:4321:4321"
+    volumes:
+      - ./tokens.json:/secrets/tokens.json:rw
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4321/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
