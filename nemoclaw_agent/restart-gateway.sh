@@ -74,7 +74,7 @@ echo "Starting gateway with preload (as root via sandbox exec)..."
 # never return).
 nohup setsid openshell sandbox exec -n "$SANDBOX" -- \
   env HOME=/sandbox \
-      NODE_OPTIONS="--require /tmp/discord-proxy-fix.cjs --dns-result-order=ipv4first" \
+      NODE_OPTIONS="--require /tmp/discord-proxy-fix.cjs --require /tmp/inference-body-capture.cjs --dns-result-order=ipv4first" \
   openclaw gateway run --port "$GATEWAY_PORT" \
   </dev/null >/tmp/gateway-start.log 2>&1 &
 disown || true

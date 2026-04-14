@@ -9,6 +9,32 @@ const PORT = Number(process.env.PORT ?? 4321);
 const HOST = process.env.HOST ?? '0.0.0.0';
 const TOKEN_FILE = process.env.HEB_TOKEN_FILE ?? '/secrets/tokens.json';
 
+const STRIP_KEYS = new Set(['$schema', '$id', 'definitions', '$defs']);
+
+function stripMeta(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) stripMeta(item);
+    return;
+  }
+  if (node && typeof node === 'object') {
+    const obj = node as Record<string, unknown>;
+    for (const k of Object.keys(obj)) {
+      if (STRIP_KEYS.has(k)) delete obj[k];
+      else stripMeta(obj[k]);
+    }
+  }
+}
+
+function sanitizeToolsListMessage(message: unknown): void {
+  if (!message || typeof message !== 'object') return;
+  const m = message as { result?: { tools?: Array<{ inputSchema?: unknown }> } };
+  const tools = m.result?.tools;
+  if (!Array.isArray(tools)) return;
+  for (const tool of tools) {
+    if (tool && tool.inputSchema) stripMeta(tool.inputSchema);
+  }
+}
+
 function buildServer(): McpServer {
   const server = new McpServer(
     { name: 'heb-mcp', version: '0.1.0' },
@@ -50,6 +76,15 @@ async function main() {
       });
       transport.onclose = () => {
         if (transport!.sessionId) transports.delete(transport!.sessionId);
+      };
+      // Gemini's OpenAI-compat endpoint rejects tool parameter schemas that
+      // carry `$schema`/`$id`/`definitions` (the MCP SDK's zod-to-json-schema
+      // output includes `$schema` by default). Strip those keys on tools/list
+      // responses on the way out.
+      const origSend = transport.send.bind(transport);
+      transport.send = async (message, options) => {
+        sanitizeToolsListMessage(message);
+        return origSend(message, options);
       };
       // One McpServer per session — McpServer.connect can only be called once.
       const server = buildServer();
