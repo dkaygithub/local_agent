@@ -1,17 +1,13 @@
-// Diagnostic preload: captures the full POST body openclaw sends to
-// inference.local whenever the upstream returns a 4xx/5xx response.
-// Dumps to /tmp/inference-errors.log inside the sandbox.
-//
-// openclaw uses fetch() (undici) for inference calls, which bypasses
-// https.request — so we patch globalThis.fetch.
-//
-// Usage (added alongside the Discord fix):
-//   NODE_OPTIONS='--require /tmp/discord-proxy-fix.cjs --require /tmp/inference-body-capture.cjs ...'
+// Diagnostic preload (enhanced): captures request+response bodies for ALL
+// POSTs to inference.local. Response bodies are buffered via res.clone().
+// Streaming SSE responses are logged in full. Logs to /tmp/inference-all.log
+// (one record per call) and keeps the old 4xx/5xx log at /tmp/inference-errors.log.
 'use strict';
 
 const fs = require('fs');
 
-const LOG = '/tmp/inference-errors.log';
+const ALL_LOG = '/tmp/inference-all.log';
+const ERR_LOG = '/tmp/inference-errors.log';
 const origFetch = globalThis.fetch;
 
 if (typeof origFetch !== 'function') {
@@ -20,9 +16,7 @@ if (typeof origFetch !== 'function') {
 }
 
 globalThis.fetch = async function patchedFetch(input, init) {
-  const url = typeof input === 'string'
-    ? input
-    : (input && input.url) || '';
+  const url = typeof input === 'string' ? input : (input && input.url) || '';
   const isInference = /inference\.local/i.test(url);
   const method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
 
@@ -30,43 +24,39 @@ globalThis.fetch = async function patchedFetch(input, init) {
     return origFetch(input, init);
   }
 
-  // Capture body early — body may be a string, Buffer, or stream.
   let bodySnapshot = '';
   try {
     const body = init && init.body;
-    if (typeof body === 'string') {
-      bodySnapshot = body;
-    } else if (Buffer.isBuffer(body)) {
-      bodySnapshot = body.toString('utf8');
-    } else if (body && typeof body === 'object') {
-      bodySnapshot = '[non-string body: ' + (body.constructor && body.constructor.name) + ']';
-    }
+    if (typeof body === 'string') bodySnapshot = body;
+    else if (Buffer.isBuffer(body)) bodySnapshot = body.toString('utf8');
+    else if (body && typeof body === 'object') bodySnapshot = '[non-string body: ' + (body.constructor && body.constructor.name) + ']';
   } catch (e) {
     bodySnapshot = '[capture error: ' + e.message + ']';
   }
 
   const res = await origFetch(input, init);
 
+  // Always clone and buffer response for diag.
+  let respBody = '';
+  try {
+    respBody = await res.clone().text();
+  } catch (e) {
+    respBody = '[clone failed: ' + e.message + ']';
+  }
+
+  const entry = [
+    `--- ${new Date().toISOString()} status=${res.status} url=${url} method=${method}`,
+    `request-body (${bodySnapshot.length} chars): ${bodySnapshot.slice(0, 200000)}`,
+    `response-body (${respBody.length} chars): ${respBody.slice(0, 200000)}`,
+    '',
+  ].join('\n');
+
+  try { fs.appendFileSync(ALL_LOG, entry); } catch (e) { console.error('[infcap]', e); }
   if (res.status >= 400) {
-    // Clone so we can also read the response body for logging without
-    // consuming the stream for the caller.
-    let respBody = '';
-    try {
-      respBody = await res.clone().text();
-    } catch (e) {
-      respBody = '[clone failed: ' + e.message + ']';
-    }
-    const entry = [
-      `--- ${new Date().toISOString()} status=${res.status} url=${url} method=${method}`,
-      `request-headers: ${JSON.stringify((init && init.headers) || {})}`,
-      `request-body (${bodySnapshot.length} chars): ${bodySnapshot}`,
-      `response-body: ${respBody}`,
-      '',
-    ].join('\n');
-    try { fs.appendFileSync(LOG, entry); } catch (e) { console.error('[infcap]', e); }
+    try { fs.appendFileSync(ERR_LOG, entry); } catch (e) {}
   }
 
   return res;
 };
 
-console.error('[inference-body-capture] installed (fetch-level); logging 4xx/5xx to', LOG);
+console.error('[inference-body-capture] installed (fetch-level) -> ', ALL_LOG);

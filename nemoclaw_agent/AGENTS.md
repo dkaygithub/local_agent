@@ -118,6 +118,8 @@ openshell doctor exec -- kubectl exec -n openshell bruiser -- npm i -g openclaw@
 # (see Section 8 for restart procedure)
 ```
 
+> **Warning:** `npm i -g openclaw@latest` reinstalls pi-ai and drops the Gemini 3 `thoughtSignature` patch from Section 14. If Gemini 3 tool-calling is required (HEB via MCP, or any tool-calling @mention on a Gemini 3 model), re-run `dbg/patch-pi-ai.sh` after upgrading.
+
 ## 8. Gateway Restart Procedure
 Systemd is not available inside the bruiser pod. `openclaw gateway restart` and `openclaw gateway install` will fail. Use `openshell sandbox exec` to manage the gateway:
 
@@ -206,3 +208,46 @@ openshell sandbox exec -n bruiser -- sh -c \
 - `403` via `HTTP Tunneling` from sandbox → policy out of sync or `allowed_ips` missing. Re-apply via `openshell policy set bruiser --policy /home/dkay/projects/local_agent/dbg/bruiser-policy-heb.yaml`.
 - `Already connected to a transport` 500 from `/mcp` → `McpServer.connect()` can only be called once per McpServer; the server creates a fresh instance per mcp-session-id.
 - Refresh failures → `docker logs heb-mcp` on the host. Expired `refresh_token` means re-run bootstrap.
+
+## 14. Gemini 3 `thoughtSignature` Patch (temporary, until upstream PR merges)
+
+Gemini 3 rejects the second turn of any tool-calling conversation with a 400 whose body reads `Function call is missing a thought_signature in functionCall parts. ... position 44`. Bruiser reaches Gemini through `inference.local` (gateway-routed OpenAI-compat endpoint), so the actual offender is **pi-ai**, not openclaw: `@mariozechner/pi-ai/dist/providers/openai-completions.js` does not capture `tool_calls[].extra_content.google.thought_signature` during streaming and does not re-emit it on outgoing tool_calls. The signature gets dropped between turns and Google rejects any subsequent request.
+
+**Earlier misdiagnosis.** An openclaw-side overlay (`solve-thought-signature` branch, boundary-aware transport patch) was prepared first. It never ran: pi-coding-agent wraps `streamSimple` before openclaw sees it, so `resolveEmbeddedAgentStreamFn`'s `currentStreamFn === streamSimple` check is false and openclaw's boundary-aware transport is skipped. Bundle instrumentation (`dbg/instrument-bundle.sh`, `/tmp/sig-trace.log`) confirmed neither `extractGoogleThoughtSignature` nor `injectToolCallThoughtSignatures` is ever invoked in the live path. Keep the openclaw patch — it's correct for direct transport users — but the live fix is in pi-ai.
+
+**Symptom.** Bruiser @mentions that invoke tools (HEB MCP, brave, any follow-up) show typing indicator, never reply. No Discord error, just silence. The first inference POST succeeds; the second 400s with the `position 44` body above.
+
+**Upstream PRs.**
+- pi-ai: branch `fix/gemini-thought-signature-round-trip-openai-completions` in `~/projects/local_agent/pi-mono/` (commit on branch adds streaming capture, outgoing `extra_content.google.thought_signature`, and a `reasoning.encrypted` guard so the OpenAI reasoning_details path is unaffected; unit-tested in `packages/ai/test/openai-completions-gemini3-thought-signature.test.ts`).
+- openclaw: branch `solve-thought-signature` in `~/projects/local_agent/openclaw/` (boundary-aware transport sig capture/inject). Inert until pi-coding-agent's stream wrapping is reworked, but kept because it's still correct for non-wrapped callers.
+
+**Apply the live fix.** `dbg/patch-pi-ai.sh` is idempotent (creates `.prepatch` backup on first run, restores + reapplies on subsequent runs). It edits the deployed pi-ai inside the bruiser sandbox as root:
+```bash
+cd ~/projects/local_agent
+./dbg/patch-pi-ai.sh
+./nemoclaw_agent/restart-gateway.sh
+```
+
+Target file inside sandbox:
+```
+/usr/local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-ai/dist/providers/openai-completions.js
+```
+
+Why `openshell doctor exec -- kubectl exec` (as root) and not `openshell sandbox exec`:
+- `openshell sandbox exec` runs as `uid=998(sandbox)` and can't write under `/usr/local/lib/node_modules/`.
+- `openshell doctor exec -- kubectl exec -n openshell bruiser` runs as `uid=0(root)` and bypasses that restriction without needing a rebuild.
+
+**Re-apply after any `npm install` that touches pi-ai.** `openclaw@<new>` upgrades (Section 7) overwrite the patched dist; re-run `dbg/patch-pi-ai.sh`. The script detects prior application via its `/* PI_AI_GEMINI_SIG_PATCH */` sentinel and is safe to run repeatedly — it will re-baseline from `.prepatch` and re-apply.
+
+**Verify.**
+```bash
+# Confirm both hunks present in the deployed file.
+openshell doctor exec -- kubectl exec -n openshell bruiser -- \
+  grep -c 'PI_AI_GEMINI_SIG_PATCH' \
+  /usr/local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-ai/dist/providers/openai-completions.js
+# Expect: 2
+```
+
+Then send a tool-triggering @mention (HEB store lookup — e.g. "set nutty brown as our store") via Discord or `openclaw agent --message "..."` and confirm the reply posts.
+
+**When to retire this section.** When the pi-ai upstream PR merges and openclaw ships a release pinned to the fixed pi-ai version, delete this section and drop the warning from Section 7.
