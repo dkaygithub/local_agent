@@ -61,11 +61,26 @@ echo "  Discord:  server $DISCORD_SERVER_ID"
 
 nemoclaw onboard --non-interactive "${EXTRA_FLAGS[@]}"
 
+# ── Post-onboard: patch openclaw's hardcoded exec-approvals path ──
+# The sandbox image ships /sandbox/.openclaw/exec-approvals.json as a symlink
+# into /sandbox/.openclaw-data/, but openclaw refuses to write through
+# symlinks, breaking every tool exec. Upstream fix: NemoClaw PR #1823. Until
+# it merges + ships, we rewrite the path in openclaw's dist bundles. Must run
+# before the gateway starts. Idempotent. See AGENTS.md §16.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SANDBOX="$NEMOCLAW_SANDBOX_NAME" \
+  bash "$SCRIPT_DIR/../dbg/patch-exec-approvals-path.sh"
+
+# ── Post-onboard: Discord-native exec approvals config ──
+# Merges channels.discord.execApprovals into openclaw.json. Idempotent. Must
+# run before the gateway starts so the gateway picks it up. See AGENTS.md §15.
+SANDBOX="$NEMOCLAW_SANDBOX_NAME" \
+  "$SCRIPT_DIR/apply-approvals-config.sh"
+
 # ── Post-onboard: Discord CONNECT-tunnel fix + gateway start ──
 # Delegated to restart-gateway.sh so the logic lives in one place and can
 # be rerun standalone when the gateway dies (issue #1738 context lives in
 # that script's header).
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SANDBOX="$NEMOCLAW_SANDBOX_NAME" CREDS="$CREDS" \
   "$SCRIPT_DIR/restart-gateway.sh"
 

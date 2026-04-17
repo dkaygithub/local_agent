@@ -26,6 +26,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SANDBOX="${SANDBOX:-bruiser}"
 CREDS="${CREDS:-$HOME/.nemoclaw/credentials.json}"
 FIX_SCRIPT="$SCRIPT_DIR/discord-proxy-fix.cjs"
+# Diagnostic preload that captures inference.local request/response bodies.
+# Wired into NODE_OPTIONS below; MUST be uploaded into the sandbox or Node
+# aborts preload with MODULE_NOT_FOUND and the gateway never starts.
+INFERENCE_CAPTURE="$SCRIPT_DIR/../dbg/inference-body-capture.cjs"
 GATEWAY_PORT="${GATEWAY_PORT:-18789}"
 
 if [ ! -f "$CREDS" ]; then
@@ -34,6 +38,10 @@ if [ ! -f "$CREDS" ]; then
 fi
 if [ ! -f "$FIX_SCRIPT" ]; then
   echo "Error: $FIX_SCRIPT not found." >&2
+  exit 1
+fi
+if [ ! -f "$INFERENCE_CAPTURE" ]; then
+  echo "Error: $INFERENCE_CAPTURE not found." >&2
   exit 1
 fi
 
@@ -57,7 +65,8 @@ trap 'rm -f "$TOKEN_TMP"' EXIT
 printf '%s' "$DISCORD_TOKEN" > "$TOKEN_TMP"
 # Preserve the `.discord-token` basename the preload script expects.
 cp "$TOKEN_TMP" "/tmp/.discord-token"
-openshell sandbox upload "$SANDBOX" "$FIX_SCRIPT"       /tmp/
+openshell sandbox upload "$SANDBOX" "$FIX_SCRIPT"         /tmp/
+openshell sandbox upload "$SANDBOX" "$INFERENCE_CAPTURE"  /tmp/
 openshell sandbox upload "$SANDBOX" "/tmp/.discord-token" /tmp/
 rm -f "/tmp/.discord-token"
 
@@ -89,6 +98,69 @@ openshell forward stop "$GATEWAY_PORT" "$SANDBOX" 2>/dev/null || true
 openshell forward start --background "0.0.0.0:$GATEWAY_PORT" "$SANDBOX" \
   </dev/null >/tmp/openshell-forward.log 2>&1
 
+# Real readiness check — poll the forwarded port for a 2xx/3xx response.
+# Without this, a gateway that crashed on preload (e.g. missing NODE_OPTIONS
+# file → MODULE_NOT_FOUND) still reaches the "Gateway ready" line because the
+# sleep-then-forward sequence only verifies TCP reachability, not serving.
+echo "Verifying gateway is actually serving on $GATEWAY_PORT..."
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  code="$(curl -sS -o /dev/null -w "%{http_code}" "http://localhost:$GATEWAY_PORT/" || true)"
+  if [ "$code" = "200" ] || [ "$code" = "302" ] || [ "$code" = "401" ]; then
+    break
+  fi
+  sleep 1
+done
+if [ "$code" != "200" ] && [ "$code" != "302" ] && [ "$code" != "401" ]; then
+  echo "Error: gateway did not become ready (last HTTP=$code). Last startup log:" >&2
+  tail -40 /tmp/gateway-start.log >&2 2>/dev/null || true
+  exit 1
+fi
+
+# Patch-liveness check — Docker Desktop restarts / `nemoclaw onboard --recreate`
+# reschedule the sandbox pod from a fresh image layer, which wipes the live
+# patches for pi-ai (§14, Gemini 3 thoughtSignature) and exec-approvals
+# (§16, symlink). With the gateway up but patches missing, every tool call
+# produces the "typing, no response" symptom — no error, just silence.
+#
+# Verify before declaring ready. Set PATCH_CHECK=off to bypass (not
+# recommended except for intentional debugging without the patches).
+if [ "${PATCH_CHECK:-on}" != "off" ]; then
+  echo "Verifying live patches are in place..."
+  pi_ai_hits="$(openshell doctor exec -- kubectl exec -n openshell "$SANDBOX" -- \
+    grep -c 'PI_AI_GEMINI_SIG_PATCH' \
+    /usr/local/lib/node_modules/openclaw/node_modules/@mariozechner/pi-ai/dist/providers/openai-completions.js \
+    2>/dev/null | tr -dc '0-9' || true)"
+  approvals_hits="$(openshell sandbox exec -n "$SANDBOX" -- \
+    sh -c 'grep -R --include="*.js" -l "\.openclaw-data/exec-approvals.json" /usr/local/lib/node_modules/openclaw/dist 2>/dev/null | wc -l' \
+    2>/dev/null | tr -dc '0-9' || true)"
+  pi_ai_hits="${pi_ai_hits:-0}"
+  approvals_hits="${approvals_hits:-0}"
+  patch_fail=0
+  if [ "$pi_ai_hits" -lt 2 ]; then
+    echo "  ✗ §14 pi-ai thoughtSignature patch MISSING ($pi_ai_hits/2 sentinels found)" >&2
+    patch_fail=1
+  else
+    echo "  ✓ §14 pi-ai patch live ($pi_ai_hits sentinels)"
+  fi
+  if [ "$approvals_hits" -lt 4 ]; then
+    echo "  ✗ §16 exec-approvals path patch MISSING ($approvals_hits/≥4 files patched)" >&2
+    patch_fail=1
+  else
+    echo "  ✓ §16 exec-approvals patch live ($approvals_hits files)"
+  fi
+  if [ "$patch_fail" = "1" ]; then
+    echo "" >&2
+    echo "Error: one or more live patches are missing. The gateway is running but tool-calling" >&2
+    echo "       will silently break (typing indicator, no reply). Reapply with:" >&2
+    echo "         cd $(cd "$SCRIPT_DIR/.." && pwd)" >&2
+    echo "         ./dbg/patch-pi-ai.sh" >&2
+    echo "         ./dbg/patch-exec-approvals-path.sh" >&2
+    echo "         ./nemoclaw_agent/restart-gateway.sh" >&2
+    echo "       Bypass with PATCH_CHECK=off ./restart-gateway.sh (not recommended)." >&2
+    exit 1
+  fi
+fi
+
 echo ""
 echo "Gateway log (first 15 lines):"
 openshell sandbox exec -n "$SANDBOX" -- sh -c "head -15 /tmp/gateway.log 2>/dev/null" || true
@@ -98,4 +170,4 @@ echo ""
 openshell sandbox exec -n "$SANDBOX" -- \
   sh -c "grep OPENCLAW_GATEWAY_TOKEN /sandbox/.bashrc" 2>/dev/null || true
 echo ""
-echo "Gateway ready. Control UI: http://localhost:$GATEWAY_PORT"
+echo "Gateway ready (HTTP $code). Control UI: http://localhost:$GATEWAY_PORT"
