@@ -9,7 +9,7 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { type HEBClient, type HEBCookies, type HEBSession, type ShoppingContext, formatter } from 'heb-sdk-unofficial';
+import { type HEBClient, type HEBCookies, type HEBSession, type ShoppingContext, type CheckoutResult, type CommitCheckoutResult, formatter } from 'heb-sdk-unofficial';
 import { z } from 'zod';
 import { getSessionStatus, saveSessionToFile } from './session.js';
 
@@ -87,6 +87,7 @@ function requireClient(
   }
   return { client };
 }
+
 
 /**
  * Register all HEB tools on the MCP server.
@@ -233,7 +234,7 @@ export function registerTools(
           return buildToolResponse(`No products found for "${query}"`, data, response_format);
         }
 
-        const formatted = products.map((p, i) => formatter.productListItem(p, i)).join('\n');
+        const formatted = products.map((p: any, i: number) => formatter.productListItem(p, i)).join('\n');
 
         return buildToolResponse(
           `Found ${products.length} products:\n\n${formatted}`,
@@ -299,7 +300,7 @@ export function registerTools(
           return buildToolResponse('No "Buy It Again" products found.', data, response_format);
         }
 
-        const formatted = products.map((p, i) => formatter.productListItem(p, i)).join('\n');
+        const formatted = products.map((p: any, i: number) => formatter.productListItem(p, i)).join('\n');
 
         return buildToolResponse(
           `Found ${products.length} "Buy It Again" products:\n\n${formatted}`,
@@ -1160,6 +1161,114 @@ Only call without filters if the user explicitly requests full/unfiltered homepa
             {
               type: "text",
               text: `Curbside reservation failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // ─────────────────────────────────────────────────────────────
+  // Checkout (Place Order)
+  // ─────────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "heb_checkout_cart",
+    {
+      title: "Start Checkout",
+      description:
+        "Begin checkout for the current cart. Validates the cart, reserved timeslot, and payment method. Does NOT place the order — call heb_commit_checkout next. Prerequisites: items in cart and a reserved delivery or curbside slot.",
+      inputSchema: { ...responseFormatParam },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ response_format }) => {
+      const result = requireClient(getClient);
+      if ("error" in result) return result.error;
+      const { client } = result;
+
+      try {
+        const res: CheckoutResult = await client.checkoutCart();
+        if (!res.success) {
+          return buildToolError(
+            `Checkout validation failed: ${res.errors.join("; ")}`,
+            { response: res.raw },
+            response_format,
+          );
+        }
+        return buildToolResponse(
+          `Checkout started. Review details, then call heb_commit_checkout to place the order.`,
+          { response: res.raw },
+          response_format,
+        );
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to start checkout: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "heb_commit_checkout",
+    {
+      title: "Commit Checkout (Place Order)",
+      description:
+        "DESTRUCTIVE: places the order and charges the default payment method. Call heb_checkout_cart first to validate. Returns the new order ID on success. Ask the user for explicit confirmation before calling.",
+      inputSchema: {
+        tos_token: z
+          .string()
+          .optional()
+          .describe("Terms-of-service acknowledgement token (optional, defaults to standard value)."),
+        ...responseFormatParam,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ tos_token, response_format }) => {
+      const result = requireClient(getClient);
+      if ("error" in result) return result.error;
+      const { client } = result;
+
+      try {
+        const res: CommitCheckoutResult = await client.commitCheckout(tos_token);
+        if (!res.success) {
+          return buildToolError(
+            `Commit checkout failed: ${res.errors.join("; ")}`,
+            { response: res.raw },
+            response_format,
+          );
+        }
+        const headline = res.orderId
+          ? `Order placed! Order ID: ${res.orderId}`
+          : `Commit succeeded but no orderId was returned — check heb_get_order_history.`;
+
+        return buildToolResponse(
+          headline,
+          { order_id: res.orderId, response: res.raw },
+          response_format,
+        );
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to commit checkout: ${error instanceof Error ? error.message : "Unknown error"}`,
             },
           ],
           isError: true,

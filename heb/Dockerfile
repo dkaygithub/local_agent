@@ -5,6 +5,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# Overlay local SDK build (adds checkout methods not yet in npm release)
+COPY vendor/heb-sdk-dist/ ./node_modules/heb-sdk-unofficial/dist/
+
 COPY tsconfig.json ./
 COPY src ./src
 RUN npx tsc
