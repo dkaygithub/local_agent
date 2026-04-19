@@ -227,7 +227,7 @@ openshell sandbox exec -n bruiser -- sh -c \
 **Persistence across `--recreate`.** `/usr/local/bin/mcporter` lives on the pod's read-only image layer and is wiped on sandbox recreate; `/sandbox/.openclaw-data/mcporter.json` is persistent. `onboard.sh` reinstalls mcporter (via `openshell doctor exec -- kubectl exec ... npm i -g mcporter`) and idempotently re-registers the `heb` server on every run.
 
 **Troubleshooting.**
-- `403` via `HTTP Tunneling` from sandbox → policy out of sync or `allowed_ips` missing. Re-apply via `openshell policy set bruiser --policy /home/dkay/projects/local_agent/dbg/bruiser-policy-heb.yaml`.
+- `403` via `HTTP Tunneling` from sandbox → policy out of sync or `allowed_ips` missing. Re-apply via `openshell policy set bruiser --policy ../dbg/bruiser-policy-heb.yaml` (from `nemoclaw_agent/`).
 - `Already connected to a transport` 500 from `/mcp` → `McpServer.connect()` can only be called once per McpServer; the server creates a fresh instance per mcp-session-id.
 - Refresh failures → `docker logs heb-mcp` on the host. Expired `refresh_token` means re-run bootstrap.
 
