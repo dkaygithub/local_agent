@@ -4,3 +4,7 @@
 [submodule "ironcurtain_agent/ironcurtain"]
 	path = ironcurtain_agent/ironcurtain
 	url = https://github.com/provos/ironcurtain
+[submodule "heb-sdk-unofficial"]
+	path = heb-sdk-unofficial
+	url = https://github.com/dkaygithub/heb-sdk-unofficial.git
+	branch = feat/checkout-cart-commit

@@ -3,5 +3,6 @@ openshell-data/
 nemoclaw-local/
 .nemoclaw
 *.tmp.json
+*.har
 openclaw/
 pi-mono/
