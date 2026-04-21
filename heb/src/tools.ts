@@ -347,7 +347,7 @@ export function registerTools(
       const { client } = result;
 
       try {
-        const product = await client.getProduct(product_id);
+        const product = await client.getProduct(product_id, { includeImages: true });
         const details = formatter.productDetails(product);
 
         return buildToolResponse(details, { product }, response_format);
@@ -357,6 +357,64 @@ export function registerTools(
             {
               type: "text",
               text: `Failed to get product: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "heb_get_product_image",
+    {
+      title: "Get Product Image",
+      description:
+        "Fetch the image bytes for a product from the HEB CDN. Returns an MCP image content block (base64 JPEG/PNG).",
+      inputSchema: {
+        product_id: z.string().describe("Product ID from search results"),
+        size: z
+          .number()
+          .int()
+          .min(64)
+          .max(1200)
+          .optional()
+          .describe("Square image size in pixels (default 360)"),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ product_id, size }) => {
+      const result = requireClient(getClient);
+      if ("error" in result) return result.error;
+      const { client } = result;
+
+      try {
+        const image = await client.getProductImage(product_id, { size });
+        const base64 = Buffer.from(image.bytes).toString("base64");
+        return {
+          content: [
+            {
+              type: "image",
+              data: base64,
+              mimeType: image.contentType,
+            },
+            {
+              type: "text",
+              text: `Image for product ${product_id} (${image.contentType}, ${image.bytes.length} bytes) — ${image.url}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to get product image: ${error instanceof Error ? error.message : "Unknown error"}`,
             },
           ],
           isError: true,

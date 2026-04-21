@@ -1,7 +1,7 @@
 export { HEBClient } from './client';
 export { createSessionFromCookies, parseCookies } from './cookies';
 export { buildBearerHeaders, buildHeaders, createSession, createTokenSession, ensureFreshSession, formatCookieHeader, getSessionInfo, isSessionAuthenticated, isSessionValid, parseJwtExpiry, resolveEndpoint, resolveShoppingContext, updateTokenSession } from './session';
-export { getProductDetails, getProductImageUrl, getProductSkuId, formatProductListItem, formatProductDetails, type FulfillmentInfo, type NutritionInfo, type Product, type ProductPrice } from './product';
+export { getProductDetails, getProductImageBytes, getProductImageUrl, getProductSkuId, formatProductListItem, formatProductDetails, type FulfillmentInfo, type GetProductImageBytesOptions, type NutritionInfo, type Product, type ProductImage, type ProductPrice } from './product';
 export { searchProducts, typeahead, type SearchOptions, type SearchResult, type TypeaheadResult, type TypeaheadSuggestion } from './search';
 export { getWeeklyAdProducts, formatWeeklyAd, formatWeeklyAdCategories, type WeeklyAdOptions, type WeeklyAdProduct, type WeeklyAdResult } from './weekly-ad';
 export { addToCart, getCart, quickAdd, removeFromCart, updateCartItem, formatCart, type Cart, type CartFee, type CartItem, type CartResponse, type DisplayPrice, type PaymentGroup } from './cart';

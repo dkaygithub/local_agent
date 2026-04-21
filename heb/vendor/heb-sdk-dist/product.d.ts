@@ -42,6 +42,31 @@ export declare function getProductSkuId(session: HEBSession, productId: string):
  */
 export declare function getProductImageUrl(productId: string, size?: number): string;
 /**
+ * Override the `hei`/`wid` query params on an HEB CDN image URL.
+ * Leaves the path (e.g. `/HEBGrocery/000931316-1`) untouched.
+ */
+export declare function withImageSize(url: string, size: number): string;
+export interface ProductImage {
+    bytes: Uint8Array;
+    contentType: string;
+    url: string;
+}
+export interface GetProductImageBytesOptions {
+    /** Image dimensions (default 360). Ignored when `url` is provided. */
+    size?: number;
+    /** Override URL (e.g. one from `product.images`). Skips URL construction. */
+    url?: string;
+}
+/**
+ * Fetch the bytes of a product image from the HEB CDN.
+ * No session required — HEB product images are publicly served.
+ *
+ * @example
+ * const img = await getProductImageBytes('1875945', { size: 500 });
+ * await fs.writeFile('rolls.jpg', img.bytes);
+ */
+export declare function getProductImageBytes(productId: string, options?: GetProductImageBytesOptions): Promise<ProductImage>;
+/**
  * Format a product for list display (e.g. search results).
  */
 export declare function formatProductListItem(p: Product, index: number): string;

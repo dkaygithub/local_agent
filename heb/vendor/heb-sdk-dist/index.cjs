@@ -66,6 +66,7 @@ __export(index_exports, {
   getOrder: () => getOrder,
   getOrders: () => getOrders,
   getProductDetails: () => getProductDetails,
+  getProductImageBytes: () => getProductImageBytes,
   getProductImageUrl: () => getProductImageUrl,
   getProductSkuId: () => getProductSkuId,
   getSessionInfo: () => getSessionInfo,
@@ -785,12 +786,9 @@ ${totals}${feesSection}${paymentSection}`;
 }
 
 // src/checkout.ts
-function extractErrors(res) {
-  return res.errors?.map((e) => e.message) ?? [];
-}
 async function checkoutCart(session) {
   const res = await persistedQuery(session, "checkoutCart", {});
-  const errors = extractErrors(res);
+  const errors = getErrorMessages(res);
   return {
     success: errors.length === 0,
     errors,
@@ -803,8 +801,8 @@ async function commitCheckout(session, tosToken = "TEST_TOKEN") {
     "commitCheckout",
     { tosToken }
   );
-  const errors = extractErrors(res);
-  const data = res.data?.commitCheckout ?? res.data ?? {};
+  const errors = getErrorMessages(res);
+  const data = res.data?.commitCheckout;
   const orderId = data?.orderId ?? data?.order?.orderId ?? data?.confirmation?.orderId ?? null;
   return {
     success: errors.length === 0,
@@ -1729,6 +1727,31 @@ async function getProductSkuId(session, productId) {
 function getProductImageUrl(productId, size = 360) {
   return `https://images.heb.com/is/image/HEBGrocery/${productId}?hei=${size}&wid=${size}`;
 }
+function withImageSize(url, size) {
+  try {
+    const u = new URL(url);
+    u.searchParams.set("hei", String(size));
+    u.searchParams.set("wid", String(size));
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+async function getProductImageBytes(productId, options = {}) {
+  const url = options.url ?? getProductImageUrl(productId, options.size);
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(
+      `Product image fetch failed: ${res.status} ${res.statusText} (${url})`
+    );
+  }
+  const buf = await res.arrayBuffer();
+  return {
+    bytes: new Uint8Array(buf),
+    contentType: res.headers.get("content-type") ?? "image/jpeg",
+    url
+  };
+}
 function formatProductListItem(p, index) {
   const price = p.price?.formatted ? ` - ${p.price.formatted}` : "";
   const size = p.size ? ` - ${p.size}` : "";
@@ -2380,6 +2403,32 @@ var HEBClient = class {
   getImageUrl(productId, size) {
     return getProductImageUrl(productId, size);
   }
+  /**
+   * Fetch product image bytes from the HEB CDN.
+   *
+   * Resolves the real carousel URL from product details (the deterministic
+   * `/HEBGrocery/<id>` URL returns a placeholder logo for most IDs — the
+   * actual asset lives at `/HEBGrocery/<zero-padded-id>-<n>`).
+   *
+   * Pass `options.url` to skip the lookup and fetch a specific URL directly.
+   *
+   * @example
+   * const img = await heb.getProductImage('1875945', { size: 500 });
+   * await fs.writeFile('rolls.jpg', img.bytes);
+   */
+  async getProductImage(productId, options) {
+    if (options?.url) {
+      return getProductImageBytes(productId, options);
+    }
+    const product = await getProductDetails(this.session, productId, { includeImages: true });
+    const resolved = product.imageUrl ?? product.images?.[0];
+    if (!resolved) {
+      throw new Error(`No image URL found for product ${productId}`);
+    }
+    const size = options?.size;
+    const url = size ? withImageSize(resolved, size) : resolved;
+    return getProductImageBytes(productId, { ...options, url });
+  }
   // ─────────────────────────────────────────────────────────────
   // Cart
   // ─────────────────────────────────────────────────────────────
@@ -2790,6 +2839,7 @@ var formatter = {
   getOrder,
   getOrders,
   getProductDetails,
+  getProductImageBytes,
   getProductImageUrl,
   getProductSkuId,
   getSessionInfo,

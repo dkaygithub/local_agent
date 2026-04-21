@@ -4,7 +4,7 @@ import { type CheckoutResult, type CommitCheckoutResult } from './checkout.js';
 import { type FulfillmentSlot, type ReserveSlotResult, type GetCurbsideSlotsOptions, type GetDeliverySlotsOptions } from './fulfillment.js';
 import { type HomepageData } from './homepage.js';
 import { type GetOrdersOptions, type OrderDetailsResponse, type OrderHistoryResponse } from './orders.js';
-import { type Product, type GetProductOptions } from './product.js';
+import { type GetProductImageBytesOptions, type Product, type ProductImage, type GetProductOptions } from './product.js';
 import { type SearchOptions, type SearchResult, type TypeaheadResult } from './search.js';
 import { type GetShoppingListOptions, type ShoppingListDetails, type ShoppingListsResult } from './shopping-list.js';
 import { type Store } from './stores.js';
@@ -111,6 +111,20 @@ export declare class HEBClient {
      * Get product image URL.
      */
     getImageUrl(productId: string, size?: number): string;
+    /**
+     * Fetch product image bytes from the HEB CDN.
+     *
+     * Resolves the real carousel URL from product details (the deterministic
+     * `/HEBGrocery/<id>` URL returns a placeholder logo for most IDs — the
+     * actual asset lives at `/HEBGrocery/<zero-padded-id>-<n>`).
+     *
+     * Pass `options.url` to skip the lookup and fetch a specific URL directly.
+     *
+     * @example
+     * const img = await heb.getProductImage('1875945', { size: 500 });
+     * await fs.writeFile('rolls.jpg', img.bytes);
+     */
+    getProductImage(productId: string, options?: GetProductImageBytesOptions): Promise<ProductImage>;
     /**
      * Get the current cart contents.
      *

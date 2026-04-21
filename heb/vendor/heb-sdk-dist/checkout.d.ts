@@ -23,7 +23,11 @@ export declare function checkoutCart(session: HEBSession): Promise<CheckoutResul
  * Charges the default payment method on file and creates the order.
  *
  * @param session - Active HEB session
- * @param tosToken - Terms-of-service acknowledgement token (default: "TEST_TOKEN")
+ * @param tosToken - Terms-of-service acknowledgement token. Defaults to
+ *   the literal string `"TEST_TOKEN"`, which is the value observed in
+ *   captured traffic from a successfully placed curbside order. The name
+ *   looks like a placeholder but is the actual accepted value; override
+ *   only if H-E-B's API changes.
  */
 export declare function commitCheckout(session: HEBSession, tosToken?: string): Promise<CommitCheckoutResult>;
 //# sourceMappingURL=checkout.d.ts.map
