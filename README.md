@@ -8,7 +8,7 @@ A personal workbench for running AI coding/control agents on my own hardware, wi
 - **`heb/`** — MCP server bridging Claude Code to H-E-B grocery ordering. Host-side OAuth, vendored SDK overlay, cart + checkout tools. See `heb/` sources.
 - **`ironcurtain_agent/`** — Experimental agent harness around the [provos/ironcurtain](https://github.com/provos/ironcurtain) Signal bridge (submodule).
 - **`resonantos/`** — ResonantOS fork integration (submodule → `dkaygithub/resonantos-alpha`) wired up with an openclaw launcher.
-- **`heb-sdk-unofficial/`** — Submodule: fork of `iHildy/heb-sdk-unofficial` on `feat/checkout-cart-commit`, vendored as source for the HEB MCP server.
+- **`heb-sdk-unofficial/`** — Submodule: fork of `iHildy/heb-sdk-unofficial`, tracked on the `dev/stack` branch (octopus merge of all in-flight PR branches). See [AGENTS.md](AGENTS.md) for the stacked-PR workflow.
 - **`design/`** — Architecture notes and three candidate setups (ResonantOS / LangGraph / NemoClaw) covering supply chain, input security, cognitive alignment, authorization, infra, observability, and human-in-the-loop.
 - **`dbg/`** — Ad-hoc debugging scripts, policy YAMLs, patches, and one-off tooling for the above. Nothing here is production — it's the scratch drawer.
 
