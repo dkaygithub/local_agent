@@ -5,6 +5,30 @@ machine. The per-subproject AGENTS.md files (e.g. `nemoclaw_agent/`)
 cover subsystem specifics; this file only documents cross-cutting
 conventions that aren't obvious from the code.
 
+## Presubmit: typecheck before pushing heb-sdk-unofficial
+
+Always run `npx tsc --noEmit` in any package you edited under
+`heb-sdk-unofficial/packages/` **before** committing or pushing. The
+fork's CI runs typecheck on PRs and a failure forces a re-roll of
+`dev/stack` plus another parent-pointer bump.
+
+```
+cd heb-sdk-unofficial/packages/heb-mcp   # or heb-sdk, heb-auth, etc.
+npx tsc --noEmit
+```
+
+If `tsc` complains it can't find `heb-auth-unofficial` or `heb-sdk-unofficial`,
+the workspace deps haven't been built yet — see the **Vendor overlay**
+section below for the build sequence (the same `dist/` files those
+commands produce are what makes the workspace imports resolve).
+
+**Watch out for implicit `any` in `.map` callbacks** when the SDK's
+exported types resolve to `any` in some build configurations. Annotate
+explicitly — e.g. `products.map((p: any, i: number) => …)` — rather
+than relying on inference. This bit us once when `heb-sdk`'s `dist`
+didn't ship full type info and `noImplicitAny` rejected callbacks that
+typechecked fine against the source tree.
+
 ## Submodule branching strategy (heb-sdk-unofficial)
 
 The `heb-sdk-unofficial/` submodule is our fork of the upstream SDK,
